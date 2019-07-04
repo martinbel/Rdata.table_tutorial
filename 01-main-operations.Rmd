@@ -1,0 +1,286 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r message=FALSE, warning=FALSE}
+options(scipen=666)
+library(data.table)
+library(ggplot2)
+```
+
+# Reading data in R
+
+You can use ?fread to read csv, txt, or any other file format. In general fread is smart enough to realise how the data is delimited. 
+Therefore you don't need to pass a sep=',' argument.
+
+```{r}
+file_name = "prices_nasdaq.csv"
+dt = fread(file_name)
+dt
+```
+
+
+- The help of `?fread` has the following intro:
+Similar to read.table but faster and more convenient. All controls such as sep, colClasses and nrows are automatically detected. bit64::integer64 types are also detected and read directly without needing to read as character before converting.
+
+### Some parameters of `fread` you might use eventually.
+
+In general fread will just work 95% of the times, but in some cases you need to use some parameters. 
+
+- colClasses: You can pass a named character vector of classes. 
+- na.strings: You need to pass which strings to be recognized as NA values. For example the empty character is read as character, "". 
+
+
+## Basic operations
+
+### 1) Subsetting
+
+#### 1.1 Select the first 5 rows:
+
+```{r}
+dt[1:5]
+```
+
+
+#### 1.2 Select data of one ticker:
+
+In this case I simply construct a boolean vector where ticker matches a string. 
+Internally these are a vector of TRUE, TRUE, ... for the rows I want to keep
+and a vector of FALSE, FALSE, ... for the rows that don't satisfy the boolean condition.
+
+```{r}
+dt[ticker == 'MELI']
+```
+
+
+#### 1.3 Understanding column classes
+
+If call `str` on the `data.table` we get a list of the columns and their class (or data type). 
+Here we can see date is being read as character and the format seems year-month-day. 
+The rest of the variables seem correct to me.
+
+```{r}
+str(dt)
+```
+
+#### 1.4 Coercing the class of a column by reference
+
+The idea now is to change the class ( data type ) of the `date` column. To do this we will use the assignment by reference operator ( `:=` ), 
+also called walrus operator. 
+
+
+```{r}
+dt[, date:=as.Date(date, format="%Y-%m-%d")]
+
+str(dt)
+```
+
+Now we can see the date is of `Date` class.
+
+
+### 2. Counting
+
+#### 2.1 Counting by one group
+
+This is probably one of the features I use the most as it's needed often to understand the data. 
+The `.N` symbol is used to count the number of rows from a group (in this case `ticker`).
+you can read the docs here on ?`"N"`.
+Using `.N` creates a column called `N`.
+
+```{r}
+dt[, .N, ticker]
+```
+
+We can easily sort this result by decreasing order by using the `-` sign before the column that gets generated with .N.
+I often pipe this operation with another `[][]` call.
+
+```{r}
+dt[, .N, ticker][order(-N)]
+```
+
+Sometimes it's useful to get more observations printed! We can AGAIN pipe the result and this results in a one liner.
+
+With the following command I get the top 10 groups. 
+
+```{r}
+dt[, .N, ticker][order(-N)][1:10]
+```
+
+
+It's often useful to save this results and plot a histogram. In this case to understand how many days of data are available
+for each ticker.
+
+```{r}
+qdays = dt[, .N, ticker][order(-N)]
+qdays[1:2]
+```
+
+The following plot shows the distribution of the amount of days available for each ticker. 
+We can at least be wary this data might have issues. But as these are companies/ETFs it's possible
+these were created in different periods of time. Therefore we can't say the data has issues or not. 
+
+```{r}
+ggplot(qdays, aes(x=N)) + 
+  geom_histogram() + 
+  xlab("Amount of days available per ticker")
+```
+
+#### 2.2 Return calculation and lagged operations
+
+`data.table` provides the `shift` function for this. 
+We first need to sort the `data.table`, take the adjusted close price lag and then compute the 
+percent difference to the previous value. 
+
+There are multiple ways to sort a `DT`. For simplicity I'm often using `sort` but there are other options such as `setkey` or `setkeyv`.
+
+```{r}
+dt = dt[order(ticker, date)]
+dt
+```
+
+We sort the table in ascending order as this is how the data gets generated.
+
+```{r}
+dt[ticker == "MELI"]
+```
+
+#### 2.3 create a lag column
+
+I pass the `adjusted` variable to `shift`, `n=1` and group by ticker. 
+The idea is to create a lag for each ticker group.
+
+```{r}
+dt[, lag:=shift(adjusted, n=1), by=ticker]
+```
+
+Now the lag column looks like this for the "MELI" ticker that is BTW a company siimlar to Amazon.
+
+```{r}
+dt[ticker == "MELI"]
+```
+
+#### 2.4 Return calculation
+
+I can now compute the daily return of each asset. This shows how the stock is moving each day and will allow some calculations to be done 
+in the next section.
+
+```{r}
+dt[, R:=ifelse(lag == 0, 0, adjusted / lag - 1)]
+```
+
+I'll remove the first observation that has NA values for simplicity
+
+```{r}
+dt = dt[complete.cases(dt)]
+```
+
+
+### 3. Aggregations
+
+#### 3.1 Global values 
+
+We can start with a top-down approach and understand what is the return distribution of all available assets. 
+
+```{r}
+dt[, quantile(R, c(0.01, 0.25, 0.5, 0.75, 0.99))]
+```
+
+It's clear the median return is zero for all assets and this makes sense for this problem. 
+
+#### 3.2 Return at the ticker level
+
+This is probably the second feature of `DT` I use the most. Computing a function by a group. 
+In this case I'm grouping by `ticker` and applying a set of functions to the `R` variable. 
+This returns a new object I called `ret_agg` where each new column is the result of the 
+group-by operation. 
+Therefore the result `R_median` variable will have the median of each `ticker`. 
+
+```{r}
+ret_agg = dt[, .(R_median = median(R), 
+                 R_mean = mean(R), 
+                 R_sd = sd(R), 
+                 R_mad = mad(R)), 
+             by=ticker]
+
+ret_agg
+```
+
+It seems there are quite a bit of outliers in the data. 
+The median seems like a better metric to get a broad idea of the return of an asset.
+
+```{r}
+ggplot(ret_agg, aes(R_mean)) +
+  geom_histogram()
+```
+
+
+```{r}
+ggplot(ret_agg, aes(R_median)) +
+  geom_histogram()
+```
+
+
+```{r}
+ggplot(ret_agg, aes(R_mad)) +
+  geom_histogram()
+```
+
+By using `mad` (median absolute deviation) and the `median` we get a better idea of the market returns at the ticker
+level compared to using the `mean` or `sd`.
+
+```{r}
+ggplot(ret_agg, aes(R_mad, R_median)) +
+  geom_point() +
+  ggtitle("Relation between MAD and median for each ticker")
+```
+
+
+### 4 Making the code more readable
+
+The above is for demo purposes but in practise I believe using simple functions helps code readability. 
+
+To summarize some of the above operations I would create two functions:
+
+```{r}
+# reading the data with fread and changing the date class to Date
+read_data <- function(file_name){
+  dt = fread(file_name)
+  dt[, date:=as.Date(date, format="%Y-%m-%d")]
+  dt
+}
+
+
+compute_returns <- function(dt){
+  dt = dt[order(ticker, date)] # sorting
+  dt[, lag:=shift(adjusted, n=1), by=ticker] # create a lag
+  dt[, R:=ifelse(lag == 0, 0, adjusted / lag - 1)]  # compute the return
+  dt[complete.cases(dt)] # remove NA columns
+}
+
+```
+
+The following code looks much clearer to follow to me. 
+I first read the data:
+
+```{r}
+dt = read_data("prices_nasdaq.csv")
+```
+
+Then I compute the returs:
+
+```{r}
+dt = compute_returns(dt)
+```
+
+
+
+
+
+
+
