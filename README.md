@@ -14,7 +14,10 @@ Feel free to make github issues or PR in order to make improvements to the code 
 
 ### Finance Project demo.
 
-I've downloaded some financial data of ~20000 companies for this demo. The idea is to work with real data and show how DT scales
-with small/medium sized dataset. (around 2 GB).
-There is a smaller version of the dataset here that has 450 MB if your RAM isn't enough for the full data.
+I've downloaded financial data of multiple companies in the nasdaq exchange, the file has 450 MB that is small for today standards. 
+
+Link to download: 
+https://1drv.ms/u/s!AgbJRsdS66y6eillJ211VlOhbHU?e=eyYtWO
+
+Select the `prices_nasdaq.csv` and right click to download it. 
 
